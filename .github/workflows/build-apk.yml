@@ -28,28 +28,13 @@ jobs:
           java-version: '17'
           cache: gradle
 
-      - name: Prepare Secrets & Environment
+      - name: Prepare Environment
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          GOOGLE_SERVICES_JSON_BASE64: ${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}
         run: |
           printf 'GEMINI_API_KEY=%s\n' "$GEMINI_API_KEY" > .env
-          mkdir -p app
           cp .env app/.env
-
-          if [ -n "$GOOGLE_SERVICES_JSON_BASE64" ]; then
-            printf '%s' "$GOOGLE_SERVICES_JSON_BASE64" | base64 --decode > app/google-services.json
-            echo "Firebase google-services.json restored from Actions secret."
-          fi
-
-      - name: Verify Firebase configuration
-        run: |
-          if [ ! -f app/google-services.json ]; then
-            echo "ERROR: app/google-services.json is missing."
-            echo "Add the Firebase file as the GOOGLE_SERVICES_JSON_BASE64 repository secret."
-            exit 1
-          fi
-          echo "Firebase configuration file found."
+          echo "Standalone build configured; Firebase/google-services.json is not required."
 
       - name: Decode Release Keystore
         env:
