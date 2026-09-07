@@ -28,6 +28,11 @@ jobs:
           java-version: '17'
           cache: gradle
 
+      - name: Set up Gradle 9.3.1
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.3.1'
+
       - name: Prepare Environment
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
@@ -54,11 +59,6 @@ jobs:
             -storepass "$KEYSTORE_PASSWORD" -alias "$KEY_ALIAS" >/dev/null
           echo "Release keystore and alias verified."
 
-      - name: Grant execute permission for Gradle wrapper
-        run: |
-          test -f gradlew || { echo "ERROR: gradlew is missing from repository root."; exit 1; }
-          chmod +x gradlew
-
       - name: Build signed Release APK
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
@@ -66,7 +66,7 @@ jobs:
           STORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-        run: ./gradlew clean assembleRelease --stacktrace
+        run: gradle clean assembleRelease --stacktrace
 
       - name: Verify generated APK
         id: find_apk
