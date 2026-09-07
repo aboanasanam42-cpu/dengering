@@ -1,0 +1,6 @@
+{
+  "name": "حلول الرياضيات",
+  "description": "تطبيق مساعد رياضي متطور لحل المسائل الرياضية خطوة بخطوة في الأسس والجذور، النسب المثلثية، تشابه المثلثات، والنسبة والتناسب مع إمكانية تصدير النتائج PDF و Excel والمشاركة عبر واتساب",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
