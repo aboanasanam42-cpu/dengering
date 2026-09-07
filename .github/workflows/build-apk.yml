@@ -19,79 +19,88 @@ jobs:
 
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
-          distribution: 'temurin'
+          distribution: temurin
           java-version: '17'
-          cache: 'gradle'
+          cache: gradle
 
-      - name: Prepare Secrets & Environment (.env)
+      - name: Prepare Secrets & Environment
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GOOGLE_SERVICES_JSON_BASE64: ${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}
         run: |
-          echo "GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}" >> .env
-          echo "GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}" >> app/.env
+          printf 'GEMINI_API_KEY=%s\n' "$GEMINI_API_KEY" > .env
+          mkdir -p app
+          cp .env app/.env
 
-      - name: Decode Keystore
+          if [ -n "$GOOGLE_SERVICES_JSON_BASE64" ]; then
+            printf '%s' "$GOOGLE_SERVICES_JSON_BASE64" | base64 --decode > app/google-services.json
+            echo "Firebase google-services.json restored from Actions secret."
+          fi
+
+      - name: Verify Firebase configuration
+        run: |
+          if [ ! -f app/google-services.json ]; then
+            echo "ERROR: app/google-services.json is missing."
+            echo "Add the Firebase file as the GOOGLE_SERVICES_JSON_BASE64 repository secret."
+            exit 1
+          fi
+          echo "Firebase configuration file found."
+
+      - name: Decode Release Keystore
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
-        if: env.KEYSTORE_BASE64 != ''
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
         run: |
-          echo "$KEYSTORE_BASE64" | base64 --decode > "$GITHUB_WORKSPACE/release-keystore.jks"
-          mkdir -p app
-          cp "$GITHUB_WORKSPACE/release-keystore.jks" app/release-keystore.jks
-          echo "Keystore successfully decoded."
+          test -n "$KEYSTORE_BASE64" || { echo "ERROR: KEYSTORE_BASE64 is missing."; exit 1; }
+          test -n "$KEYSTORE_PASSWORD" || { echo "ERROR: KEYSTORE_PASSWORD is missing."; exit 1; }
+          test -n "$KEY_ALIAS" || { echo "ERROR: KEY_ALIAS is missing."; exit 1; }
 
-      - name: Grant execute permission for gradlew
-        run: chmod +x gradlew || true
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$GITHUB_WORKSPACE/release-keystore.jks"
+          test -s "$GITHUB_WORKSPACE/release-keystore.jks" || { echo "ERROR: decoded keystore is empty."; exit 1; }
 
-      - name: Build and Sign APK with Gradle
+          echo "Checking that KEY_ALIAS exists in the keystore..."
+          keytool -list -keystore "$GITHUB_WORKSPACE/release-keystore.jks" \
+            -storepass "$KEYSTORE_PASSWORD" -alias "$KEY_ALIAS" >/dev/null
+          echo "Release keystore and alias verified."
+
+      - name: Grant execute permission for Gradle wrapper
+        run: |
+          test -f gradlew || { echo "ERROR: gradlew is missing from repository root."; exit 1; }
+          chmod +x gradlew
+
+      - name: Build signed Release APK
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           KEYSTORE_PATH: ${{ github.workspace }}/release-keystore.jks
           STORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-        run: |
-          if [ -f "gradlew" ]; then
-            ./gradlew assembleRelease --stacktrace || ./gradlew assembleDebug --stacktrace
-          else
-            gradle assembleRelease --stacktrace || gradle assembleDebug --stacktrace
-          fi
+        run: ./gradlew clean assembleRelease --stacktrace
 
-      - name: Sign APK (if unaligned/unsigned release)
-        env:
-          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
-          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-        if: env.KEYSTORE_BASE64 != '' && env.KEYSTORE_PASSWORD != ''
-        uses: r0adkll/sign-android-release@v1
-        id: sign_app
-        with:
-          releaseDirectory: app/build/outputs/apk/release
-          signingKeyBase64: ${{ secrets.KEYSTORE_BASE64 }}
-          alias: ${{ secrets.KEY_ALIAS }}
-          keyStorePassword: ${{ secrets.KEYSTORE_PASSWORD }}
-          keyPassword: ${{ secrets.KEY_PASSWORD }}
-        continue-on-error: true
-
-      - name: Locate Final APK
+      - name: Verify generated APK
         id: find_apk
         run: |
-          # Check signed APK first, then any release or debug APK
-          APK_PATH=$(find app/build/outputs/apk/ -type f -name "*signed*.apk" | head -n 1)
-          if [ -z "$APK_PATH" ]; then
-            APK_PATH=$(find app/build/outputs/apk/ -type f -name "*.apk" | head -n 1)
+          APK_PATH="app/build/outputs/apk/release/app-release.apk"
+          if [ ! -f "$APK_PATH" ]; then
+            echo "ERROR: Expected release APK was not generated."
+            find app/build/outputs -type f -name '*.apk' -print || true
+            exit 1
           fi
-          echo "Selected APK path: $APK_PATH"
-          echo "apk_path=$APK_PATH" >> $GITHUB_OUTPUT
+          echo "APK generated: $APK_PATH"
+          echo "apk_path=$APK_PATH" >> "$GITHUB_OUTPUT"
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: MathSolver-APK
           path: ${{ steps.find_apk.outputs.apk_path }}
+          if-no-files-found: error
           retention-days: 14
 
       - name: Create GitHub Release
@@ -102,20 +111,18 @@ jobs:
           name: Release ${{ github.ref_name }}
           body: |
             ## 📐 تطبيق حلول الرياضيات المتطورة (Math Solver)
-            - **تصميم وبرمجة:** الدكتور / مالك الرميمة (هاتف: 771124103)
+            - **تصميم وبرمجة:** الدكتور / مالك الرميمة
             - **فكرة:** أ/ محمد الرميمة
             - **مصحح فكرة:** أ/ مطهر الرميمة
 
-            ---
-            ### 🚀 الميزات المتوفرة في هذا الإصدار:
-            - **الأسس والجذور**: تبسيط الجذور التربيعية والتكعيبية وحل المعادلات الأسية خطوة بخطوة.
-            - **النسب المثلثية**: حساب الوتر (نظرية فيثاغورس)، زوايا الارتفاع، جا، جتا، وظا، مع رسم بياني تفاعلي للمثلث القائم.
-            - **تشابه المثلثات**: حساب معاملات التشابه، تناسب الأطوال، والمحيطات مع مخطط هندسي توضيحي.
-            - **النسبة والتناسب**: حل التناسب والضرب التبادلي والتقسيم التناسبي التلقائي.
-            - **تصدير النتائج**:
-              - 📄 تصدير تقرير بصيغة **PDF** جاهز للمشاركة والطباعة.
-              - 📊 تصدير جدول بيانات **Excel (.csv)** متوافق تماماً مع اللغة العربية (UTF-8 BOM).
-              - 💬 إرسال الحل مباشرة عبر **واتساب** للرقم 771124103 أو أي رقم آخر.
+            ### المزايا
+            - الأسس والجذور
+            - النسب المثلثية
+            - تشابه المثلثات
+            - النسبة والتناسب
+            - تصدير PDF
+            - تصدير Excel
+            - مشاركة الحل عبر واتساب
           draft: false
           prerelease: false
         env:
